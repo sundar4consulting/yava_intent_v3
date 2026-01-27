@@ -1,0 +1,520 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "YAVA Intent Classifier API V2",
+    "version": "2.0.0",
+    "description": "Watson Orchestrate Skill Interface V2 - Elasticsearch-backed RAG+LLM Intent Classification\n\n## NEW IN V2\n- **Elasticsearch Vector Store**: Scalable to millions of vectors (replaces in-memory storage)\n- **OpenAI GPT-4o LLM Integration**: Automatic enhancement for low-confidence cases (< 0.75)\n- **Cost & Performance Tracking**: Monitor RAG vs LLM usage, latency, and API costs\n- **Basic Authentication**: Secure Elasticsearch connection with username/password\n- **All V1 Features**: Slots, multi-intent, disambiguation, context-awareness\n\n## ARCHITECTURE\n- **V1**: InMemoryVectorStore (< 10K vectors)\n- **V2**: Elasticsearch cluster (millions of vectors, production-ready)\n\n## KEY FEATURES\n1. **Intent Classification**: 47 healthcare intents with RAG+LLM hybrid approach\n2. **Slot Extraction**: Dates, IDs, amounts, names, medications, procedures\n3. **Multi-Intent Detection**: Handles compound sentences with multiple requests\n4. **Disambiguation**: Clarification prompts when intents are ambiguous\n5. **Context Awareness**: Session-based conversation history\n6. **Performance Metrics**: RAG (15-25ms), LLM (500-1500ms), cost tracking\n\n## AUTHENTICATION\nRequires environment variables:\n- `ELASTICSEARCH_HOST`: ES cluster URL\n- `ELASTICSEARCH_USERNAME`: Username (default: elastic)\n- `ELASTICSEARCH_PASSWORD`: Password\n- `OPENAI_API_KEY`: OpenAI API key for LLM features\n",
+    "contact": {
+      "name": "YAVA Team",
+      "email": "yava-support@aetna.com"
+    },
+    "license": {
+      "name": "Proprietary"
+    }
+  },
+  "servers": [
+    {
+      "url": "https://api.yava.aetna.com/v2",
+      "description": "Production Server (Render Deployment)"
+    },
+    {
+      "url": "http://localhost:8000/v2",
+      "description": "Local Development Server"
+    }
+  ],
+  "tags": [
+    {
+      "name": "Classification",
+      "description": "Intent classification with RAG+LLM hybrid (includes slots, multi-intent, disambiguation)"
+    },
+    {
+      "name": "Catalog",
+      "description": "Intent catalog from Elasticsearch"
+    }
+  ],
+  "paths": {
+    "/classify": {
+      "post": {
+        "tags": ["Classification"],
+        "summary": "Full NLU Classification (Primary Tool)",
+        "description": "**PRIMARY TOOL**: Complete intent classification with all features bundled.\n\nClassifies user intent using Elasticsearch RAG + OpenAI LLM enhancement with:\n- **Intent Classification**: 47 healthcare intents with confidence scores\n- **Slot Extraction**: Automatic entity extraction (dates, IDs, amounts, names, medications)\n- **Multi-Intent Detection**: Handles compound sentences with multiple requests\n- **Disambiguation**: Returns clarification options when intents are ambiguous\n- **Context Awareness**: Leverages conversation history for better accuracy\n- **Agent Routing**: Determines target agent (PharmacyAgent, ClaimsAgent, etc.)\n\n**V2 ENHANCEMENTS:**\n- Elasticsearch kNN vector search (HNSW algorithm, cosine similarity)\n- Automatic LLM invocation when confidence < 0.75\n- LLM reasoning and entity extraction for ambiguous cases\n- Cost tracking ($0 for RAG, ~$0.01-0.03 for LLM calls)\n- Performance metrics (RAG: 15-25ms, LLM: 500-1500ms)\n\n**CLASSIFICATION FLOW:**\n1. Elasticsearch kNN search retrieves top 5 similar examples\n2. Extract slots/entities from user input\n3. Check for multiple intents in utterance\n4. If confidence >= 0.75 → Return RAG result\n5. If confidence < 0.75 → Invoke OpenAI GPT-4o for reasoning\n6. If ambiguous → Include disambiguation options\n7. Merge all results (RAG + LLM + slots + multi-intent + disambiguation)\n\n**ONE TOOL DOES IT ALL**: No need for separate extract-slots, detect-multi-intent, or disambiguate calls.\n",
+        "operationId": "classifyIntent",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["user_input"],
+                "properties": {
+                  "user_input": {
+                    "type": "string",
+                    "description": "User's message to classify",
+                    "example": "I need to refill my prescription for Lipitor"
+                  },
+                  "conversation_id": {
+                    "type": "string",
+                    "description": "Session identifier for context tracking",
+                    "example": "session-12345"
+                  },
+                  "member_id": {
+                    "type": "string",
+                    "description": "Member ID for session key",
+                    "example": "M001234567"
+                  },
+                  "context_aware": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Enable context boosting from conversation history"
+                  },
+                  "force_llm": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Force LLM invocation regardless of confidence"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Classification successful with all features included",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClassificationResponse"
+                },
+                "examples": {
+                  "rag_only": {
+                    "summary": "High confidence RAG-only result",
+                    "value": {
+                      "intent": "prescription_refill",
+                      "agent": "PharmacyAgent",
+                      "category": "pharmacy",
+                      "confidence": 0.92,
+                      "classification_method": "RAG-only",
+                      "llm_invoked": false,
+                      "vector_store": "elasticsearch",
+                      "slots": {
+                        "medication_name": "Lipitor"
+                      },
+                      "has_multi_intents": false,
+                      "needs_disambiguation": false,
+                      "performance": {
+                        "rag_time_ms": 18.5,
+                        "llm_time_ms": 0,
+                        "llm_cost_usd": 0.0
+                      }
+                    }
+                  },
+                  "rag_llm_hybrid": {
+                    "summary": "Low confidence with LLM enhancement",
+                    "value": {
+                      "intent": "check_claim_status",
+                      "agent": "ClaimsAgent",
+                      "confidence": 0.88,
+                      "classification_method": "RAG+LLM",
+                      "llm_invoked": true,
+                      "llm_reasoning": "User wants to check claim status based on context",
+                      "llm_confidence": 0.88,
+                      "slots": {
+                        "date_of_service": "2026-01-15",
+                        "claim_id": "CLM12345"
+                      },
+                      "has_multi_intents": false,
+                      "needs_disambiguation": false,
+                      "performance": {
+                        "rag_time_ms": 20.1,
+                        "llm_time_ms": 850.3,
+                        "llm_cost_usd": 0.0123
+                      }
+                    }
+                  },
+                  "multi_intent": {
+                    "summary": "Multiple intents detected",
+                    "value": {
+                      "intent": "prescription_refill",
+                      "confidence": 0.85,
+                      "has_multi_intents": true,
+                      "multi_intents": [
+                        {
+                          "segment": "refill my prescription",
+                          "intent": "prescription_refill",
+                          "confidence": 0.92,
+                          "agent": "PharmacyAgent"
+                        },
+                        {
+                          "segment": "check my claim status",
+                          "intent": "check_claim_status",
+                          "confidence": 0.88,
+                          "agent": "ClaimsAgent"
+                        }
+                      ]
+                    }
+                  },
+                  "disambiguation_needed": {
+                    "summary": "Ambiguous intent requiring clarification",
+                    "value": {
+                      "intent": "prescription_general",
+                      "confidence": 0.68,
+                      "needs_disambiguation": true,
+                      "disambiguation": {
+                        "prompt": "I found multiple possible intents. Which one did you mean?",
+                        "options": [
+                          {
+                            "option_number": 1,
+                            "intent": "prescription_refill",
+                            "description": "Refill an existing prescription"
+                          },
+                          {
+                            "option_number": 2,
+                            "intent": "prescription_status",
+                            "description": "Check prescription status"
+                          }
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/intents": {
+      "get": {
+        "tags": ["Catalog"],
+        "summary": "List All Available Intents (Secondary Tool)",
+        "description": "**SECONDARY TOOL**: Returns intent catalog for reference.\n\n**V2 CHANGE**: Queries Elasticsearch for unique intents instead of static knowledge base.\n\nReturns all 47 healthcare intents with:\n- Intent names and categories\n- Example counts from Elasticsearch index\n- Sample utterances for each intent\n- Agent routing information\n\n**USE CASES:**\n- Display available intents to users\n- Validate intent names for API calls\n- Show intent examples for training\n- Health check for Elasticsearch index\n",
+        "operationId": "listIntents",
+        "responses": {
+          "200": {
+            "description": "Intent catalog retrieved from Elasticsearch",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IntentCatalogResponse"
+                },
+                "example": {
+                  "source": "elasticsearch",
+                  "total_count": 47,
+                  "categories": ["pharmacy", "claims", "benefits", "provider", "member_services"],
+                  "by_category": {
+                    "pharmacy": [
+                      {
+                        "intent_name": "prescription_refill",
+                        "category": "pharmacy",
+                        "example_count": 15,
+                        "sample_utterance": "I need to refill my prescription"
+                      },
+                      {
+                        "intent_name": "prescription_status",
+                        "category": "pharmacy",
+                        "example_count": 12,
+                        "sample_utterance": "Where is my prescription?"
+                      }
+                    ]
+                  },
+                  "intents": [
+                    {
+                      "intent_name": "prescription_refill",
+                      "category": "pharmacy",
+                      "example_count": 15,
+                      "sample_utterance": "I need to refill my prescription"
+                    },
+                    {
+                      "intent_name": "check_claim_status",
+                      "category": "claims",
+                      "example_count": 18,
+                      "sample_utterance": "What's the status of my claim?"
+                    }
+                  ],
+                  "index_name": "yava-intent-examples"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Elasticsearch error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "example": "Failed to fetch intents from Elasticsearch: Connection refused"
+                    },
+                    "source": {
+                      "type": "string",
+                      "example": "elasticsearch"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "ClassificationResponse": {
+        "type": "object",
+        "properties": {
+          "intent": {
+            "type": "string",
+            "description": "Primary detected intent",
+            "example": "prescription_refill"
+          },
+          "agent": {
+            "type": "string",
+            "description": "Target agent for routing",
+            "example": "PharmacyAgent"
+          },
+          "category": {
+            "type": "string",
+            "description": "Intent category",
+            "example": "pharmacy"
+          },
+          "confidence": {
+            "type": "number",
+            "format": "float",
+            "description": "Classification confidence (0-1)",
+            "example": 0.92
+          },
+          "classification_method": {
+            "type": "string",
+            "enum": ["RAG-only", "RAG+LLM"],
+            "description": "Classification method used",
+            "example": "RAG-only"
+          },
+          "llm_invoked": {
+            "type": "boolean",
+            "description": "Whether LLM was used",
+            "example": false
+          },
+          "vector_store": {
+            "type": "string",
+            "description": "V2 indicator",
+            "example": "elasticsearch"
+          },
+          "query_result_action": {
+            "type": "string",
+            "enum": ["RAG", "RAGLLM"],
+            "example": "RAG"
+          },
+          "llm_reasoning": {
+            "type": "string",
+            "description": "LLM explanation (if invoked)",
+            "example": "User explicitly mentions prescription refill"
+          },
+          "llm_confidence": {
+            "type": "number",
+            "format": "float",
+            "description": "LLM confidence score"
+          },
+          "llm_entities": {
+            "type": "object",
+            "description": "Entities extracted by LLM",
+            "additionalProperties": true
+          },
+          "needs_clarification": {
+            "type": "boolean",
+            "description": "LLM requests clarification"
+          },
+          "clarification_question": {
+            "type": "string",
+            "description": "Question to ask user"
+          },
+          "policy_reference": {
+            "type": "string",
+            "description": "Relevant policy info from LLM"
+          },
+          "rag_result": {
+            "type": "object",
+            "description": "Original RAG result (if LLM invoked)"
+          },
+          "rag_vs_llm_agreement": {
+            "type": "boolean",
+            "description": "RAG and LLM agreed on intent"
+          },
+          "llm_override": {
+            "type": "boolean",
+            "description": "LLM changed RAG result"
+          },
+          "slots": {
+            "type": "object",
+            "description": "Extracted entities",
+            "additionalProperties": true,
+            "example": {
+              "medication_name": "Lipitor"
+            }
+          },
+          "entities": {
+            "type": "object",
+            "description": "Named entities"
+          },
+          "merged_slots": {
+            "type": "object",
+            "description": "RAG + LLM merged slots"
+          },
+          "has_multi_intents": {
+            "type": "boolean",
+            "description": "Multiple intents detected"
+          },
+          "multi_intents": {
+            "type": "array",
+            "description": "Array of detected intents",
+            "items": {
+              "type": "object"
+            }
+          },
+          "needs_disambiguation": {
+            "type": "boolean",
+            "description": "Clarification needed"
+          },
+          "disambiguation": {
+            "type": "object",
+            "description": "Disambiguation options"
+          },
+          "candidates": {
+            "type": "array",
+            "description": "Top candidate intents",
+            "items": {
+              "type": "object"
+            }
+          },
+          "session": {
+            "type": "object",
+            "properties": {
+              "conversation_id": {
+                "type": "string"
+              },
+              "recent_intents": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "turn_count": {
+                "type": "integer"
+              }
+            }
+          },
+          "performance": {
+            "type": "object",
+            "properties": {
+              "processing_time_ms": {
+                "type": "number"
+              },
+              "rag_time_ms": {
+                "type": "number"
+              },
+              "llm_time_ms": {
+                "type": "number"
+              },
+              "llm_cost_usd": {
+                "type": "number"
+              },
+              "top_match_score": {
+                "type": "number"
+              }
+            }
+          }
+        }
+      },
+      "IntentCatalogResponse": {
+        "type": "object",
+        "properties": {
+          "source": {
+            "type": "string",
+            "example": "elasticsearch"
+          },
+          "total_count": {
+            "type": "integer",
+            "example": 47
+          },
+          "categories": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "example": ["pharmacy", "claims", "benefits", "provider"]
+          },
+          "by_category": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "array",
+              "items": {
+                "type": "object"
+              }
+            }
+          },
+          "intents": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "intent_name": {
+                  "type": "string"
+                },
+                "category": {
+                  "type": "string"
+                },
+                "example_count": {
+                  "type": "integer"
+                },
+                "sample_utterance": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "index_name": {
+            "type": "string",
+            "example": "yava-intent-examples"
+          }
+        }
+      },
+      "Error": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "string"
+          },
+          "details": {
+            "type": "string"
+          },
+          "timestamp": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      }
+    }
+  }
+}
