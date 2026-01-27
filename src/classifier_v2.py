@@ -453,7 +453,6 @@ class ElasticsearchVectorStore:
         username: Optional[str] = None,
         password: Optional[str] = None,
         api_key: Optional[str] = None,
-        verify_certs:Optional[str] = None,
         index_name: str = "yava-intent-kb",
         timeout: int = 30,
         verify_certs: bool = False
@@ -1454,5 +1453,6 @@ if __name__ == "__main__":
     print(f"Vector Store: {metrics['vector_store_type']}")
     print(f"Auth Method: {metrics['auth_method']}")
     print("="*80)
+
 
 
