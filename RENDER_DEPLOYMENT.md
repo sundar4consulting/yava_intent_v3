@@ -64,6 +64,15 @@ ELASTICSEARCH_PASSWORD=your_elasticsearch_password  # Mark as secret
 ELASTICSEARCH_INDEX=yava-intent-examples
 ELASTICSEARCH_VERIFY_CERTS=true
 
+
+https://b1f651f0-3e22-4438-acc6-393b44d2f15b.bkvfu0nd0m8k95k94ujg.databases.appdomain.cloud 
+
+Port : 30799 
+
+Username : ibm_cloud_772f779e_ec52_4fe6_a7ce_54c7ec80f93c
+
+xfKhC11LHlz7EaCBjwiqo0Tt2a6J9f25
+
 # OpenAI Configuration
 OPENAI_API_KEY=sk-your-openai-api-key  # Mark as secret
 OPENAI_MODEL=gpt-4o
@@ -503,3 +512,4 @@ Your YAVA Intent Classifier V2 is now running on Render with Elasticsearch backe
 **Need Help?**
 - Render Support: [render.com/support](https://render.com/support)
 - Elasticsearch Forums: [discuss.elastic.co](https://discuss.elastic.co)
+
