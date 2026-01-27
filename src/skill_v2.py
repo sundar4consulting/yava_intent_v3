@@ -85,6 +85,7 @@ def classify_intent(user_input: str,
         elasticsearch_host=os.getenv("ELASTICSEARCH_HOST"),
         elasticsearch_username=os.getenv("ELASTICSEARCH_USERNAME"),
         elasticsearch_password=os.getenv("ELASTICSEARCH_PASSWORD"),
+        elasticsearch_verify_certs=os.getenv("ELASTICSEARCH_VERIFY_CERTS"),
         openai_api_key=os.getenv("OPENAI_API_KEY"),
         llm_threshold=float(os.getenv("LLM_THRESHOLD", "0.75")),
         enable_llm=os.getenv("ENABLE_LLM", "true").lower() == "true"
@@ -788,3 +789,4 @@ if __name__ == "__main__":
     print("\n=== TEST: Health Check ===")
     health = health_check()
     print(json.dumps(health, indent=2))
+
