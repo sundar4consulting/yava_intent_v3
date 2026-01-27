@@ -453,7 +453,8 @@ class ElasticsearchVectorStore:
         username: Optional[str] = None,
         password: Optional[str] = None,
         api_key: Optional[str] = None,
-        index_name: str = "yava-intent-examples",
+        verify_certs:Optional[str] = None,
+        index_name: str = "yava-intent-kb",
         timeout: int = 30,
         verify_certs: bool = True
     ):
@@ -477,6 +478,8 @@ class ElasticsearchVectorStore:
         username = username or os.getenv("ELASTICSEARCH_USERNAME", "elastic")
         password = password or os.getenv("ELASTICSEARCH_PASSWORD")
         api_key = api_key or os.getenv("ELASTICSEARCH_API_KEY")
+        verify_certs=verify_certs or os.getenv("ELASTICSEARCH_VERIFY_CERTS")
+        
         
         # Initialize ES client with Basic Auth (priority) or API key (fallback)
         if password:
@@ -1451,3 +1454,4 @@ if __name__ == "__main__":
     print(f"Vector Store: {metrics['vector_store_type']}")
     print(f"Auth Method: {metrics['auth_method']}")
     print("="*80)
+
