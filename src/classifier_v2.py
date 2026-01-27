@@ -477,7 +477,7 @@ class ElasticsearchVectorStore:
         username = username or os.getenv("ELASTICSEARCH_USERNAME", "elastic")
         password = password or os.getenv("ELASTICSEARCH_PASSWORD")
         api_key = api_key or os.getenv("ELASTICSEARCH_API_KEY")
-        verify_certs=verify_certs or os.getenv("ELASTICSEARCH_VERIFY_CERTS")
+        verify_certs = verify_certs or os.getenv("ELASTICSEARCH_VERIFY_CERTS")
         
         
         # Initialize ES client with Basic Auth (priority) or API key (fallback)
@@ -486,7 +486,7 @@ class ElasticsearchVectorStore:
             self.es = Elasticsearch(
                 hosts=hosts,
                 basic_auth=(username, password),
-                verify_certs=verify_certs,
+                verify_certs=False,
                 timeout=timeout
             )
             auth_method = f"Basic Auth (user: {username})"
@@ -1453,6 +1453,7 @@ if __name__ == "__main__":
     print(f"Vector Store: {metrics['vector_store_type']}")
     print(f"Auth Method: {metrics['auth_method']}")
     print("="*80)
+
 
 
 
