@@ -456,7 +456,7 @@ class ElasticsearchVectorStore:
         verify_certs:Optional[str] = None,
         index_name: str = "yava-intent-kb",
         timeout: int = 30,
-        verify_certs: bool = True
+        verify_certs: bool = False
     ):
         """
         Initialize Elasticsearch vector store with Basic Auth.
@@ -1454,4 +1454,5 @@ if __name__ == "__main__":
     print(f"Vector Store: {metrics['vector_store_type']}")
     print(f"Auth Method: {metrics['auth_method']}")
     print("="*80)
+
 
