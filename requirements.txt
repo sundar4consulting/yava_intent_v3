@@ -1,5 +1,22 @@
-fastapi>=0.100.0
-uvicorn[standard]>=0.23.0
-pydantic>=2.0.0
+# YAVA Intent Classifier V2 - Dependencies
+# For Render deployment with Elasticsearch backend
+
+# Core dependencies
+elasticsearch>=8.0.0,<9.0.0
 numpy>=1.24.0
+sentence-transformers>=2.2.0
+torch>=2.0.0
+openai>=1.0.0
+
+# Supporting libraries
+python-dotenv>=1.0.0
+requests>=2.31.0
+
+# Optional: API framework if deploying as web service
+flask>=3.0.0
 gunicorn>=21.0.0
+
+# Alternative: FastAPI (if preferred over Flask)
+# fastapi>=0.100.0
+# uvicorn[standard]>=0.23.0
+# pydantic>=2.0.0

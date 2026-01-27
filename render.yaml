@@ -1,16 +1,60 @@
-# Render Blueprint - Deploy YAVA Intent Classifier
-# https://render.com/docs/blueprint-spec
+# Render Blueprint for YAVA Intent Classifier V2
+# Deploy with: render blueprint deploy
 
 services:
+  # Web Service - REST API V2
   - type: web
-    name: yava-intent-classifier
+    name: yava-intent-classifier-v2-api
     runtime: python
-    region: oregon  # or ohio, frankfurt, singapore
-    plan: free      # free, starter, standard, pro
+    region: oregon # Choose your region: oregon, ohio, frankfurt, singapore
+    plan: starter # Or: standard, pro
+    
+    # Build settings
     buildCommand: pip install -r requirements.txt
-    startCommand: uvicorn api:app --host 0.0.0.0 --port $PORT
+    
+    # Start Flask API V2
+    startCommand: python -m gunicorn --bind 0.0.0.0:$PORT --workers 2 --timeout 120 api_v2:app
+    
+    # Health check endpoint
+    healthCheckPath: /v2/health
+    
+    # Environment variables (set in Render Dashboard)
     envVars:
+      - key: ELASTICSEARCH_HOST
+        sync: false # Set manually in dashboard
+      
+      - key: ELASTICSEARCH_USERNAME
+        value: elastic
+      
+      - key: ELASTICSEARCH_PASSWORD
+        sync: false # Secret - set in dashboard
+      
+      - key: ELASTICSEARCH_INDEX
+        value: yava-intent-examples
+      
+      - key: ELASTICSEARCH_VERIFY_CERTS
+        value: "true"
+      
+      - key: OPENAI_API_KEY
+        sync: false # Secret - set in dashboard
+      
+      - key: OPENAI_MODEL
+        value: gpt-4o
+      
+      - key: LLM_THRESHOLD
+        value: "0.75"
+      
+      - key: ENABLE_LLM
+        value: "true"
+      
+      - key: ENVIRONMENT
+        value: production
+      
+      - key: LOG_LEVEL
+        value: INFO
+      
       - key: PYTHON_VERSION
         value: "3.11"
-    healthCheckPath: /health
+    
+    # Auto-deploy on git push
     autoDeploy: true

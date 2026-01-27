@@ -1,20 +1,36 @@
-# Use Python 3.10 slim image
-FROM python:3.10-slim
+# Dockerfile for YAVA Intent Classifier V2 on Render
+# Supports Elasticsearch-backed RAG+LLM hybrid classification
+
+FROM python:3.11-slim
 
 # Set working directory
 WORKDIR /app
 
-# Copy requirements first for caching
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    gcc \
+    g++ \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy requirements
 COPY requirements.txt .
 
-# Install dependencies
+# Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application code
-COPY . .
+COPY src/ ./src/
+COPY api_v2.py .
+COPY openapi_skill_v2.yaml .
+COPY .env.example .env.example
 
-# Expose port
-EXPOSE 8080
+# Expose port (if running as web service)
+EXPOSE 8000
 
-# Run the application
-CMD ["uvicorn", "api:app", "--host", "0.0.0.0", "--port", "8080"]
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
+    CMD python -c "import requests; requests.get('http://localhost:8000/v2/health')"
+
+# Run Flask API server V2
+CMD ["python", "-m", "gunicorn", "--bind", "0.0.0.0:8000", "--workers", "2", "--timeout", "120", "api_v2:app"]
+
