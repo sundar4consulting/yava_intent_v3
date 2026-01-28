@@ -87,9 +87,7 @@ def classify_intent(user_input: str,
         elasticsearch_password=os.getenv("ELASTICSEARCH_PASSWORD"),
         openai_api_key=os.getenv("OPENAI_API_KEY"),
         llm_threshold=float(os.getenv("LLM_THRESHOLD", "0.75")),
-        enable_llm=os.getenv("ENABLE_LLM", "true").lower() == "true",
-        verify_certs=os.getenv("ELASTICSEARCH_VERIFY_CERTS")
-
+        enable_llm=os.getenv("ENABLE_LLM", "true").lower() == "true"
     )
     
     # V2 hybrid classification
@@ -417,84 +415,91 @@ def clear_session(conversation_id: str) -> Dict:
 #===============================================================================
 # TOOL 6: INTENT CATALOG (FROM ELASTICSEARCH)
 #===============================================================================
-def get_intents() -> Dict:
+def get_intents(category: Optional[str] = None,
+                agent_routing: Optional[str] = None,
+                include_keywords: bool = True,
+                limit: int = 100) -> Dict:
     """
     Tool: List all available intents from Elasticsearch index.
     
-    V2 CHANGE: Queries Elasticsearch for unique intents instead of static knowledge base.
+    V2 CHANGE: Uses list_intents() method from ElasticsearchVectorStore
+    which matches the esSearchintentList_47.json schema.
+    
+    Schema Fields:
+        - intent_id, intent_name, category, intent_category
+        - agent_routing, priority, description_short
+        - disambiguation_prompt, training_utterances, keywords
+        - use_cases, expected_outcomes, example_utterance
+        - created_at, updated_at
+    
+    Args:
+        category: Filter by category (e.g., "healthcare", "benefits")
+        agent_routing: Filter by agent (e.g., "PharmacyAgent")
+        include_keywords: Include keywords array (default: True)
+        limit: Maximum intents to return (default: 100)
+    
+    Returns:
+        - total_count: Total intents in index
+        - intents: Array of intent objects with full schema attributes
+        - by_category: Intents grouped by category
+        - by_agent: Intents grouped by agent_routing
     """
     classifier = get_hybrid_classifier_v2()
     
     try:
-        # Aggregation query to get unique intents with example counts
-        agg_query = {
-            "size": 0,
-            "aggs": {
-                "unique_intents": {
-                    "terms": {
-                        "field": "intent_name",
-                        "size": 100
-                    },
-                    "aggs": {
-                        "categories": {
-                            "terms": {
-                                "field": "intent_category",
-                                "size": 1
-                            }
-                        },
-                        "sample_utterance": {
-                            "top_hits": {
-                                "size": 1,
-                                "_source": ["example_utterance", "metadata"]
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        
-        response = classifier.rag_classifier.vector_store.es.search(
-            index=classifier.rag_classifier.vector_store.index_name,
-            body=agg_query
+        # Use list_intents() method from vector store (matches esSearchintentList_47.json schema)
+        result = classifier.rag_classifier.vector_store.list_intents(
+            category=category,
+            agent_routing=agent_routing,
+            include_keywords=include_keywords,
+            include_training_utterances=False,  # Don't include full utterances for catalog view
+            limit=limit
         )
         
-        # Parse aggregations
-        intents = []
-        by_category = {}
-        
-        for bucket in response["aggregations"]["unique_intents"]["buckets"]:
-            intent_name = bucket["key"]
-            example_count = bucket["doc_count"]
-            
-            # Get category
-            category_buckets = bucket["categories"]["buckets"]
-            category = category_buckets[0]["key"] if category_buckets else "unknown"
-            
-            # Get sample utterance
-            sample_hits = bucket["sample_utterance"]["hits"]["hits"]
-            sample_utterance = sample_hits[0]["_source"]["example_utterance"] if sample_hits else ""
-            
-            intent_data = {
-                "intent_name": intent_name,
-                "category": category,
-                "example_count": example_count,
-                "sample_utterance": sample_utterance
+        if "error" in result:
+            return {
+                "error": result["error"],
+                "source": "elasticsearch"
             }
-            
-            intents.append(intent_data)
-            
+        
+        # Group by category and agent for summary
+        by_category = {}
+        by_agent = {}
+        
+        for intent in result.get("intents", []):
             # Group by category
-            if category not in by_category:
-                by_category[category] = []
-            by_category[category].append(intent_data)
+            cat = intent.get("category", "unknown")
+            if cat not in by_category:
+                by_category[cat] = []
+            by_category[cat].append({
+                "intent_id": intent.get("intent_id"),
+                "intent_name": intent.get("intent_name"),
+                "priority": intent.get("priority"),
+                "description_short": intent.get("description_short", ""),
+                "example_utterance": intent.get("example_utterance", "")
+            })
+            
+            # Group by agent
+            agent = intent.get("agent_routing", "FallbackAgent")
+            if agent not in by_agent:
+                by_agent[agent] = []
+            by_agent[agent].append({
+                "intent_id": intent.get("intent_id"),
+                "intent_name": intent.get("intent_name"),
+                "category": cat
+            })
         
         return {
             "source": "elasticsearch",
-            "total_count": len(intents),
+            "total_count": result.get("total_count", 0),
+            "returned_count": result.get("returned_count", 0),
+            "filters_applied": result.get("filters_applied"),
             "categories": list(by_category.keys()),
+            "agents": list(by_agent.keys()),
             "by_category": by_category,
-            "intents": intents,
-            "index_name": classifier.rag_classifier.vector_store.index_name
+            "by_agent": by_agent,
+            "intents": result.get("intents", []),
+            "index_name": result.get("index_name")
         }
     
     except Exception as e:
@@ -504,71 +509,110 @@ def get_intents() -> Dict:
         }
 
 
-def get_intent_details(intent_name: str) -> Dict:
+def get_intent_details(intent_id: str = None, intent_name: str = None) -> Dict:
     """
     Tool: Get details for a specific intent from Elasticsearch.
     
-    V2 CHANGE: Queries Elasticsearch for intent examples instead of static knowledge base.
+    V2 CHANGE: Uses get_intent_by_id() method and supports both ID and name lookup.
+    Matches esSearchintentList_47.json schema.
+    
+    Args:
+        intent_id: Intent ID (e.g., "INT-PHR-0001") - preferred
+        intent_name: Intent name (e.g., "Pharmacy Services") - fallback
+    
+    Returns:
+        - intent: Full intent object with all schema attributes
+        - training_utterances: Array of training examples
+        - keywords: Array of keywords
     """
     classifier = get_hybrid_classifier_v2()
     
     try:
-        # Query for all examples of this intent
-        query = {
-            "query": {
-                "term": {
-                    "intent_name": intent_name
-                }
-            },
-            "size": 10,
-            "_source": ["intent_id", "intent_name", "intent_category", "example_utterance", "metadata"]
-        }
-        
-        response = classifier.rag_classifier.vector_store.es.search(
-            index=classifier.rag_classifier.vector_store.index_name,
-            body=query
-        )
-        
-        if response["hits"]["total"]["value"] == 0:
-            return {
-                "found": False,
-                "error": f"Intent '{intent_name}' not found in Elasticsearch",
-                "source": "elasticsearch"
-            }
-        
-        # Parse results
-        examples = []
-        intent_data = None
-        
-        for hit in response["hits"]["hits"]:
-            source = hit["_source"]
+        # Prefer ID lookup using get_intent_by_id()
+        if intent_id:
+            intent = classifier.rag_classifier.vector_store.get_intent_by_id(intent_id)
             
-            if not intent_data:
-                intent_data = {
-                    "intent_id": source.get("intent_id", ""),
-                    "intent_name": source["intent_name"],
-                    "category": source.get("intent_category", "unknown"),
-                    "example_count": response["hits"]["total"]["value"]
+            if intent:
+                return {
+                    "found": True,
+                    "intent": intent,
+                    "source": "elasticsearch",
+                    "index_name": classifier.rag_classifier.vector_store.index_name
                 }
-            
-            examples.append({
-                "utterance": source["example_utterance"],
-                "metadata": source.get("metadata", {})
-            })
+            else:
+                return {
+                    "found": False,
+                    "error": f"Intent with ID '{intent_id}' not found",
+                    "source": "elasticsearch"
+                }
         
-        intent_data["examples"] = examples
+        # Fallback to name search using list_intents()
+        if intent_name:
+            result = classifier.rag_classifier.vector_store.list_intents(
+                search_text=intent_name,
+                include_training_utterances=True,
+                include_keywords=True,
+                limit=1
+            )
+            
+            if result.get("intents"):
+                return {
+                    "found": True,
+                    "intent": result["intents"][0],
+                    "source": "elasticsearch",
+                    "index_name": result.get("index_name")
+                }
+            else:
+                return {
+                    "found": False,
+                    "error": f"Intent '{intent_name}' not found",
+                    "source": "elasticsearch"
+                }
         
         return {
-            "found": True,
-            "intent": intent_data,
-            "source": "elasticsearch",
-            "index_name": classifier.rag_classifier.vector_store.index_name
+            "found": False,
+            "error": "Please provide either intent_id or intent_name",
+            "source": "elasticsearch"
         }
     
     except Exception as e:
         return {
             "found": False,
             "error": f"Failed to fetch intent details: {str(e)}",
+            "source": "elasticsearch"
+        }
+
+
+def get_intent_summary() -> Dict:
+    """
+    Tool: Get summary statistics of all intents grouped by category and agent.
+    
+    Uses get_intent_summary() from vector store which aggregates on keyword fields
+    (category, agent_routing, priority) - avoids fielddata error on text fields.
+    
+    Returns:
+        - total_intents: Total count
+        - by_category: Count per category
+        - by_agent: Count per agent
+        - by_priority: Count per priority level
+    """
+    classifier = get_hybrid_classifier_v2()
+    
+    try:
+        summary = classifier.rag_classifier.vector_store.get_intent_summary()
+        
+        return {
+            "source": "elasticsearch",
+            "total_intents": summary.get("total_intents", 0),
+            "by_category": summary.get("by_category", {}),
+            "by_agent": summary.get("by_agent", {}),
+            "by_priority": summary.get("by_priority", {}),
+            "index_name": summary.get("index_name")
+        }
+    
+    except Exception as e:
+        return {
+            "error": f"Failed to get intent summary: {str(e)}",
             "source": "elasticsearch"
         }
 
@@ -749,10 +793,21 @@ def main(params: Dict) -> Dict:
     
     # INTENT CATALOG
     elif action == "intents":
-        return get_intents()
+        return get_intents(
+            category=params.get("category"),
+            agent_routing=params.get("agent_routing"),
+            include_keywords=params.get("include_keywords", True),
+            limit=params.get("limit", 100)
+        )
     
     elif action == "intent_details":
-        return get_intent_details(params.get("intent_name", ""))
+        return get_intent_details(
+            intent_id=params.get("intent_id"),
+            intent_name=params.get("intent_name")
+        )
+    
+    elif action == "intent_summary":
+        return get_intent_summary()
     
     # METRICS (V2-specific)
     elif action == "metrics":
@@ -769,7 +824,8 @@ def main(params: Dict) -> Dict:
                 "classify", "extract_slots", "detect_multi",
                 "disambiguate", "resolve_disambiguate",
                 "context", "clear_context",
-                "intents", "intent_details", "metrics", "health"
+                "intents", "intent_details", "intent_summary",
+                "metrics", "health"
             ]
         }
 
@@ -790,5 +846,3 @@ if __name__ == "__main__":
     print("\n=== TEST: Health Check ===")
     health = health_check()
     print(json.dumps(health, indent=2))
-
-
