@@ -782,6 +782,415 @@ class ElasticsearchVectorStore:
             }
         except Exception as e:
             return {"error": str(e)}
+    
+    def list_intents(
+        self,
+        category: Optional[str] = None,
+        agent_routing: Optional[str] = None,
+        priority: Optional[int] = None,
+        search_text: Optional[str] = None,
+        limit: int = 100,
+        include_training_utterances: bool = False,
+        include_keywords: bool = True
+    ) -> Dict:
+        """
+        List all intents from Elasticsearch index with mapping attributes.
+        
+        Matches the schema structure from esSearchintentList_47.json:
+        - intent_id, intent_name, category, intent_category
+        - agent_routing, priority, description_short
+        - disambiguation_prompt, training_utterances, keywords
+        - use_cases, expected_outcomes, example_utterance
+        - created_at, updated_at
+        
+        Args:
+            category: Filter by category (e.g., "healthcare", "benefits")
+            agent_routing: Filter by agent (e.g., "PharmacyAgent", "ClaimsAgent")
+            priority: Filter by priority level (1-5)
+            search_text: Search text within intent fields
+            limit: Maximum number of intents to return (default: 100)
+            include_training_utterances: Include full training utterances array (default: False for performance)
+            include_keywords: Include keywords array (default: True)
+        
+        Returns:
+            Dict with intents list and metadata:
+            {
+                "total_count": 47,
+                "returned_count": 47,
+                "filters_applied": {...},
+                "intents": [
+                    {
+                        "intent_id": "INT-PHR-0001",
+                        "intent_name": "Pharmacy Services",
+                        "category": "healthcare",
+                        "agent_routing": "PharmacyAgent",
+                        "priority": 2,
+                        "description_short": "...",
+                        "disambiguation_prompt": "...",
+                        "keywords": [...],
+                        "example_utterance": "...",
+                        "use_cases": "...",
+                        "expected_outcomes": "...",
+                        "training_utterance_count": 40,
+                        "created_at": "2026-01-24T16:44:31Z",
+                        "updated_at": "2026-01-24T16:44:31Z"
+                    },
+                    ...
+                ]
+            }
+        
+        USAGE EXAMPLES:
+        ---------------
+        # List all intents
+        result = vector_store.list_intents()
+        print(f"Found {result['total_count']} intents")
+        
+        # Filter by category
+        result = vector_store.list_intents(category="healthcare")
+        
+        # Filter by agent
+        result = vector_store.list_intents(agent_routing="PharmacyAgent")
+        
+        # Search within intents
+        result = vector_store.list_intents(search_text="prescription")
+        
+        # Include full training utterances
+        result = vector_store.list_intents(include_training_utterances=True, limit=10)
+        """
+        
+        # Build source fields list based on options
+        source_fields = [
+            "intent_id",
+            "intent_name",
+            "category",
+            "intent_category",
+            "agent_routing",
+            "priority",
+            "description_short",
+            "disambiguation_prompt",
+            "example_utterance",
+            "use_cases",
+            "expected_outcomes",
+            "created_at",
+            "updated_at"
+        ]
+        
+        if include_keywords:
+            source_fields.append("keywords")
+        
+        if include_training_utterances:
+            source_fields.append("training_utterances")
+        
+        # Build query with filters
+        must_clauses = []
+        filter_clauses = []
+        filters_applied = {}
+        
+        # Category filter
+        if category:
+            filter_clauses.append({
+                "bool": {
+                    "should": [
+                        {"term": {"category": category}},
+                        {"term": {"intent_category": category}}
+                    ]
+                }
+            })
+            filters_applied["category"] = category
+        
+        # Agent routing filter
+        if agent_routing:
+            filter_clauses.append({"term": {"agent_routing": agent_routing}})
+            filters_applied["agent_routing"] = agent_routing
+        
+        # Priority filter
+        if priority is not None:
+            filter_clauses.append({"term": {"priority": priority}})
+            filters_applied["priority"] = priority
+        
+        # Text search within intent fields
+        if search_text:
+            must_clauses.append({
+                "multi_match": {
+                    "query": search_text,
+                    "fields": [
+                        "intent_name^3",
+                        "description_short^2",
+                        "training_utterances^2",
+                        "keywords^2",
+                        "use_cases",
+                        "expected_outcomes",
+                        "disambiguation_prompt"
+                    ],
+                    "type": "best_fields",
+                    "operator": "or",
+                    "fuzziness": "AUTO"
+                }
+            })
+            filters_applied["search_text"] = search_text
+        
+        # Build final query
+        if must_clauses or filter_clauses:
+            query = {
+                "query": {
+                    "bool": {
+                        "must": must_clauses if must_clauses else [{"match_all": {}}],
+                        "filter": filter_clauses if filter_clauses else []
+                    }
+                },
+                "_source": source_fields,
+                "size": limit,
+                "sort": [
+                    {"priority": {"order": "asc"}},
+                    {"intent_name.keyword": {"order": "asc", "unmapped_type": "keyword"}}
+                ]
+            }
+        else:
+            # No filters - match all
+            query = {
+                "query": {"match_all": {}},
+                "_source": source_fields,
+                "size": limit,
+                "sort": [
+                    {"priority": {"order": "asc"}},
+                    {"intent_name.keyword": {"order": "asc", "unmapped_type": "keyword"}}
+                ]
+            }
+        
+        try:
+            # Execute search
+            response = self.es.search(
+                index=self.index_name,
+                body=query
+            )
+            
+            # Get total count
+            total_hits = response["hits"]["total"]
+            total_count = total_hits["value"] if isinstance(total_hits, dict) else total_hits
+            
+            # Parse results with mapped attributes
+            intents = []
+            for hit in response["hits"]["hits"]:
+                source = hit["_source"]
+                
+                intent_data = {
+                    # Core identifiers
+                    "intent_id": source.get("intent_id"),
+                    "intent_name": source.get("intent_name"),
+                    
+                    # Classification attributes
+                    "category": source.get("category") or source.get("intent_category", "general"),
+                    "agent_routing": source.get("agent_routing", "FallbackAgent"),
+                    "priority": source.get("priority", 3),
+                    
+                    # Descriptions
+                    "description_short": source.get("description_short", ""),
+                    "disambiguation_prompt": source.get("disambiguation_prompt", ""),
+                    
+                    # Example
+                    "example_utterance": source.get("example_utterance", ""),
+                    
+                    # Business context
+                    "use_cases": source.get("use_cases", ""),
+                    "expected_outcomes": source.get("expected_outcomes", ""),
+                    
+                    # Timestamps
+                    "created_at": source.get("created_at"),
+                    "updated_at": source.get("updated_at")
+                }
+                
+                # Add keywords if requested
+                if include_keywords:
+                    intent_data["keywords"] = source.get("keywords", [])
+                    intent_data["keyword_count"] = len(source.get("keywords", []))
+                
+                # Add training utterances if requested
+                if include_training_utterances:
+                    intent_data["training_utterances"] = source.get("training_utterances", [])
+                    intent_data["training_utterance_count"] = len(source.get("training_utterances", []))
+                else:
+                    # Just include count for reference
+                    training_utts = source.get("training_utterances", [])
+                    intent_data["training_utterance_count"] = len(training_utts) if isinstance(training_utts, list) else 0
+                
+                intents.append(intent_data)
+            
+            return {
+                "total_count": total_count,
+                "returned_count": len(intents),
+                "filters_applied": filters_applied if filters_applied else None,
+                "index_name": self.index_name,
+                "include_training_utterances": include_training_utterances,
+                "include_keywords": include_keywords,
+                "intents": intents
+            }
+        
+        except Exception as e:
+            print(f"❌ Elasticsearch list_intents error: {e}")
+            import traceback
+            traceback.print_exc()
+            return {
+                "total_count": 0,
+                "returned_count": 0,
+                "filters_applied": filters_applied if filters_applied else None,
+                "error": str(e),
+                "intents": []
+            }
+    
+    def get_intent_by_id(self, intent_id: str) -> Optional[Dict]:
+        """
+        Get a single intent by its ID with all mapped attributes.
+        
+        Args:
+            intent_id: The intent ID (e.g., "INT-PHR-0001")
+        
+        Returns:
+            Intent dict with all attributes, or None if not found
+        
+        USAGE:
+        ------
+        intent = vector_store.get_intent_by_id("INT-PHR-0001")
+        if intent:
+            print(f"Intent: {intent['intent_name']}")
+            print(f"Agent: {intent['agent_routing']}")
+        """
+        query = {
+            "query": {
+                "term": {"intent_id": intent_id}
+            },
+            "_source": [
+                "intent_id", "intent_name", "category", "intent_category",
+                "agent_routing", "priority", "description_short",
+                "disambiguation_prompt", "training_utterances", "keywords",
+                "example_utterance", "use_cases", "expected_outcomes",
+                "created_at", "updated_at"
+            ],
+            "size": 1
+        }
+        
+        try:
+            response = self.es.search(index=self.index_name, body=query)
+            
+            if response["hits"]["hits"]:
+                source = response["hits"]["hits"][0]["_source"]
+                return {
+                    "intent_id": source.get("intent_id"),
+                    "intent_name": source.get("intent_name"),
+                    "category": source.get("category") or source.get("intent_category", "general"),
+                    "agent_routing": source.get("agent_routing", "FallbackAgent"),
+                    "priority": source.get("priority", 3),
+                    "description_short": source.get("description_short", ""),
+                    "disambiguation_prompt": source.get("disambiguation_prompt", ""),
+                    "training_utterances": source.get("training_utterances", []),
+                    "training_utterance_count": len(source.get("training_utterances", [])),
+                    "keywords": source.get("keywords", []),
+                    "keyword_count": len(source.get("keywords", [])),
+                    "example_utterance": source.get("example_utterance", ""),
+                    "use_cases": source.get("use_cases", ""),
+                    "expected_outcomes": source.get("expected_outcomes", ""),
+                    "created_at": source.get("created_at"),
+                    "updated_at": source.get("updated_at")
+                }
+            return None
+        
+        except Exception as e:
+            print(f"❌ Error fetching intent {intent_id}: {e}")
+            return None
+    
+    def get_intents_by_category(self, category: str) -> List[Dict]:
+        """
+        Get all intents for a specific category.
+        
+        Args:
+            category: Category name (e.g., "healthcare", "benefits", "claims")
+        
+        Returns:
+            List of intent dicts
+        """
+        result = self.list_intents(category=category, limit=100)
+        return result.get("intents", [])
+    
+    def get_intents_by_agent(self, agent_routing: str) -> List[Dict]:
+        """
+        Get all intents routed to a specific agent.
+        
+        Args:
+            agent_routing: Agent name (e.g., "PharmacyAgent", "ClaimsAgent")
+        
+        Returns:
+            List of intent dicts
+        """
+        result = self.list_intents(agent_routing=agent_routing, limit=100)
+        return result.get("intents", [])
+    
+    def get_intent_summary(self) -> Dict:
+        """
+        Get a summary of all intents grouped by category and agent.
+        
+        Returns:
+            Dict with counts by category and agent:
+            {
+                "total_intents": 47,
+                "by_category": {"healthcare": 15, "benefits": 10, ...},
+                "by_agent": {"PharmacyAgent": 5, "ClaimsAgent": 8, ...},
+                "by_priority": {1: 5, 2: 15, 3: 20, 4: 5, 5: 2}
+            }
+        """
+        # Aggregation query
+        query = {
+            "size": 0,
+            "aggs": {
+                "by_category": {
+                    "terms": {"field": "category", "size": 50}
+                },
+                "by_agent": {
+                    "terms": {"field": "agent_routing", "size": 50}
+                },
+                "by_priority": {
+                    "terms": {"field": "priority", "size": 10}
+                }
+            }
+        }
+        
+        try:
+            response = self.es.search(index=self.index_name, body=query)
+            
+            # Parse aggregations
+            by_category = {
+                bucket["key"]: bucket["doc_count"]
+                for bucket in response["aggregations"]["by_category"]["buckets"]
+            }
+            
+            by_agent = {
+                bucket["key"]: bucket["doc_count"]
+                for bucket in response["aggregations"]["by_agent"]["buckets"]
+            }
+            
+            by_priority = {
+                bucket["key"]: bucket["doc_count"]
+                for bucket in response["aggregations"]["by_priority"]["buckets"]
+            }
+            
+            total_hits = response["hits"]["total"]
+            total_count = total_hits["value"] if isinstance(total_hits, dict) else total_hits
+            
+            return {
+                "total_intents": total_count,
+                "by_category": by_category,
+                "by_agent": by_agent,
+                "by_priority": by_priority,
+                "index_name": self.index_name
+            }
+        
+        except Exception as e:
+            print(f"❌ Error getting intent summary: {e}")
+            return {
+                "total_intents": 0,
+                "by_category": {},
+                "by_agent": {},
+                "by_priority": {},
+                "error": str(e)
+            }
 
 
 #===============================================================================
@@ -1571,4 +1980,3 @@ if __name__ == "__main__":
     print(f"Search Algorithm: {metrics['search_algorithm']}")
     print(f"Auth Method: {metrics['auth_method']}")
     print("="*80)
-
