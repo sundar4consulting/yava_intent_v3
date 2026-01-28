@@ -495,7 +495,7 @@ class ElasticsearchVectorStore:
             self.es = Elasticsearch(
                 hosts=hosts,
                 basic_auth=(username, password),
-                verify_certs=verify_certs,
+                verify_certs=False,
                 timeout=timeout
             )
             auth_method = f"Basic Auth (user: {username})"
@@ -1447,7 +1447,7 @@ def get_hybrid_classifier_v2(
         username=elasticsearch_username,
         password=elasticsearch_password,
         index_name=index_name,
-        verify_certs=verify_certs
+        verify_certs=False
     )
     
     # Initialize supporting components
@@ -1571,3 +1571,4 @@ if __name__ == "__main__":
     print(f"Search Algorithm: {metrics['search_algorithm']}")
     print(f"Auth Method: {metrics['auth_method']}")
     print("="*80)
+
